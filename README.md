@@ -51,8 +51,8 @@ pip install excelplumber
 From source:
 
 ```bash
-git clone https://github.com/raadongithub/excel-parser.git
-cd excel-parser
+git clone https://github.com/raadongithub/excelplumber.git
+cd excelplumber
 pip install -e ".[dev]"
 pytest
 ```
