@@ -1,0 +1,7 @@
+* text=auto
+*.xlsx binary
+*.py text eol=lf
+*.md text eol=lf
+tests/golden/*.jsonl text eol=lf
+tests/fixtures/*.csv -text
+tests/fixtures/*.tsv -text
