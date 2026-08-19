@@ -9,6 +9,7 @@ from pathlib import Path
 from .config import ParseOptions
 from .detectors.boundaries import TableRegion, _is_blank, scan_regions
 from .detectors.headers import ResolvedHeader, _detect_footers, resolve_header
+from .detectors.layout import detect_pivot_layout
 from .detectors.profile import ColumnProfile, normalize_cell, profile_column
 from .errors import StructureError
 from .models import Column, ParseWarning, TableBlock, WarningCode
@@ -120,6 +121,9 @@ def _build_table(
     columns = [
         Column(name=p.name, dtype=p.dtype, unit=p.unit) for p in profiles.values()
     ]
+    pivot = detect_pivot_layout(columns, region.sheet, region.first_row)
+    if pivot is not None:
+        warnings.append(pivot)
     stream = TableStream(
         source_file=source_file,
         sheet_name=region.sheet,

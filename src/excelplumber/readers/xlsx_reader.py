@@ -26,12 +26,25 @@ _CELL_REF = re.compile(r"([A-Z]+)(\d+)")
 # Declared-size cap against zip bombs: refuse members claiming > 4 GB uncompressed.
 _MAX_MEMBER_SIZE = 4 * 1024**3
 
+# Uncached formula coordinates are sampled, not collected: one warning
+# needs a location and a count, not every cell on a million-row sheet.
+_MAX_FORMULA_SAMPLES = 64
+
 
 def _col_to_index(letters: str) -> int:
     n = 0
     for ch in letters:
         n = n * 26 + (ord(ch) - 64)
     return n - 1
+
+
+def _col_letters(index: int) -> str:
+    letters = ""
+    n = index + 1
+    while n:
+        n, rem = divmod(n - 1, 26)
+        letters = chr(65 + rem) + letters
+    return letters
 
 
 def _parse_ref(ref: str) -> tuple[int, int]:
@@ -95,6 +108,39 @@ class XlsxReader:
                             sheet=info.name,
                         )
                     )
+        for info in self.sheets():
+            self._warn_uncached_formulas(info)
+
+    def _warn_uncached_formulas(self, info: SheetInfo) -> None:
+        """Warn once per sheet about formulas that were never evaluated.
+
+        Values are read with data_only, which returns the result the
+        writing application stored. A formula saved without one comes
+        back as None, which is indistinguishable from an empty cell
+        unless the structural pass has seen the formula. Coordinates
+        excluded as hidden do not warn, and a truncated sample can
+        under-report columns while the count stays exact.
+        """
+        visible = [
+            (r, c)
+            for r, c in info.uncached_formulas
+            if self._opts.include_hidden
+            or (r not in info.hidden_rows and c not in info.hidden_cols)
+        ]
+        if not visible:
+            return
+        row, col = visible[0]
+        cols = ", ".join(_col_letters(c) for c in sorted({c for _, c in visible}))
+        self.warnings.append(
+            ParseWarning(
+                WarningCode.FORMULA_NO_CACHE,
+                f"{info.uncached_formula_count} formula cell(s) in column(s) "
+                f"{cols} have no stored result and read as empty; first at "
+                f"{_col_letters(col)}{row + 1}",
+                sheet=info.name,
+                row=row,
+            )
+        )
 
     def _structural_pass(self, path: Path) -> list[SheetInfo]:
         infos: list[SheetInfo] = []
@@ -162,6 +208,19 @@ class XlsxReader:
                         lo = int(elem.get("min", "1")) - 1
                         hi = int(elem.get("max", "1")) - 1
                         info.hidden_cols.update(range(lo, hi + 1))
+                elif tag == f"{_NS}c":
+                    if len(elem) and elem[0].tag == f"{_NS}f":
+                        cached = elem.find(f"{_NS}v")
+                        if cached is None or not (cached.text or "").strip():
+                            info.uncached_formula_count += 1
+                            ref = elem.get("r")
+                            if (
+                                len(info.uncached_formulas) < _MAX_FORMULA_SAMPLES
+                                and ref
+                                and _CELL_REF.fullmatch(ref)
+                            ):
+                                info.uncached_formulas.append(_parse_ref(ref))
+                    elem.clear()
                 elif tag == f"{_NS}dimension":
                     ref = elem.get("ref", "")
                     if ref:

@@ -6,13 +6,40 @@
 
 Edge-case-hardened CSV/Excel parsing for RAG chunking and embeddings.
 
-Real-world spreadsheets break naive parsers constantly: multi-table sheets, multi-row
-headers, merged cells, locale-variant numbers, Excel serial dates. When parsing silently
-fails, the resulting chunks are garbage and retrieval quality quietly degrades with no
-error thrown. excelplumber detects and normalizes these edge cases, then turns the result
-into token-budgeted, self-describing chunks ready to embed.
-
 **Messy file in, structurally-sound and context-preserving chunks out.**
+
+## The problem
+
+Every CSV and Excel reader in wide use assumes the file is a rectangle: one header row on
+top, one table per sheet, one type per column, one value per cell. Spreadsheets written by
+people satisfy none of that. They carry report titles above the header, headers stacked two
+or three rows deep, merged cells standing in for repeated values, several tables on one
+sheet, totals glued to the bottom, hidden rows left over from last quarter, and numbers
+that are secretly text because someone typed a currency symbol.
+
+The damage is not that these files fail to parse. It is that they parse:
+
+- A two-row header becomes one header row plus a first data row that is really labels.
+- A merged region becomes one value followed by a column of blanks.
+- A totals row becomes a data row, so every aggregate downstream is double counted.
+- `1.234` meaning one thousand two hundred thirty-four is read as `1.234`, off by 1000x.
+- `02134` becomes `2134`, and the zip code matches nothing.
+- A formula saved with no stored result becomes an empty cell.
+
+Nothing raises. You get a table whose shape looks plausible, and the mistake surfaces weeks
+later as a number nobody can reconcile.
+
+In a retrieval pipeline the silence costs more, because there is no reconciliation step at
+all. Corrupted rows are serialized into chunk text, embedded, and indexed, and the vector
+store answers confidently out of them. Quality degrades with no exception, no failed build,
+and no log line naming the file responsible.
+
+excelplumber closes that gap three ways. It **detects** the structures naive readers
+flatten, so a multi-row header stays a header and a totals row stays a total. It **refuses
+to guess quietly**: every ambiguity it resolves carries a stable warning code and a
+confidence, and genuinely broken input raises instead. And it **chunks for retrieval**,
+emitting token-budgeted, self-describing chunks that carry the exact typed values alongside
+the text you embed.
 
 ## Workflow
 
@@ -114,12 +141,12 @@ wild, so a `.csv` that is really a workbook still routes to the right reader. If
 recognizes the content, `SourceError` is raised rather than decoding binary noise as a
 one-column table.
 
-## Edge cases handled
+## Failure modes handled
 
 Every row of this table has a fixture and a passing test behind it
 (`tests/fixtures/`, one file per case, regenerable via `make_fixtures.py`).
 
-| # | Edge case | Handled how |
+| # | Failure mode | Handled how |
 |---|-----------|-------------|
 | 1 | Multiple tables per sheet | Blank-row gap scanning splits regions; each becomes its own TableBlock |
 | 2 | Multi-row / nested headers | Header span detected and flattened top-down: `2024 \| Q1 Revenue` |
@@ -135,7 +162,7 @@ Every row of this table has a fixture and a passing test behind it
 | 12 | Dates | Excel serials, multiple string formats, `MM/DD` vs `DD/MM` resolved by day>12 evidence, else month-first + warning |
 | 13 | Mixed-type columns | Frozen per-column dtype; nonconforming cells keep raw text + per-cell warning, never silent coercion |
 | 14 | Leading-zero loss | All-digit columns with leading zeros pinned to text, raw preserved |
-| 15 | Scientific-notation IDs | Numbers parse to int/Decimal, never float; raw round-trips exactly |
+| 15 | Scientific-notation IDs | Exponent forms parse to Decimal, never float, so the written digits round-trip; column flagged `sci_notation_preserved` |
 | 16 | Delimiter detection | `csv.Sniffer`, then column-count-stability vote over `, ; \t \|` |
 | 17 | Encoding detection | BOM sniff, then charset-normalizer on a 256 KB head; strict decode with one fallback retry |
 | 18 | Quoted fields, embedded newlines | stdlib csv in strict mode; broken quoting raises `CorruptFileError` |
@@ -174,7 +201,7 @@ excelplumber.ExcelPlumberError     # base class
 └── ConfigError                    # contradictory or out-of-range options
 ```
 
-Every guess the parser makes carries a confidence and one of 21 stable `WarningCode`
+Every guess the parser makes carries a confidence and one of 20 stable `WarningCode`
 values (`ambiguous_date_format`, `mixed_type`, `pivot_layout_suspected`, and so on). The
 codes are part of the public API, so pipelines can route on them instead of matching on
 message text. Nothing is ever silently coerced or silently dropped.
@@ -221,10 +248,12 @@ are matching registries for normalizers (`register_normalizer`) and chunk serial
 
 ## Known limitations
 
-Pivot layouts are flagged, not un-pivoted. Cross-sheet relationships are not resolved.
+Pivot layouts are flagged (`pivot_layout_suspected`), not un-pivoted, because choosing the
+measure column is a guess. Cross-sheet relationships are not resolved.
 Legacy binary `.xls`, charts, and images are out of scope. Token estimation accuracy drops
 for RTL and CJK text when the default estimator is used. Formula cells in workbooks saved
-without a cached value are reported as `formula_no_cache` rather than evaluated.
+without a cached value are reported as `formula_no_cache` rather than evaluated: no formula
+engine is included, so those cells read as empty.
 
 ## License
 

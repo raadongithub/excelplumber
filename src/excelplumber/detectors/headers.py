@@ -16,6 +16,8 @@ _FOOTER_KEY = re.compile(
 )
 
 _NUMERIC_RE = re.compile(r"^[\s$€£¥+-]*[\d.,]+\s*%?\s*$")
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+_MIN_PERIOD_HEADERS = 3
 
 
 @dataclass
@@ -212,6 +214,29 @@ def _looks_data(v: object) -> bool:
     return _looks_numeric(s) or looks_like_date(s)
 
 
+def _looks_period(v: object) -> bool:
+    """True for a bare year, which names a column but reads as data."""
+    return bool(_YEAR_RE.match(_text(v)))
+
+
+def _is_periodic_header(row: list[Cell]) -> bool:
+    """True for a cross-tab header: a text stub plus bare period labels.
+
+    Years across the top score as data under _text_ratio, which would
+    cost the row its names and hand the years to the first data row.
+    Requiring a text cell and several periods keeps a row of plain
+    numbers, or a data row that merely carries a year, out of it.
+    """
+    populated = [c for c in row if _text(c.value)]
+    texty = [c for c in populated if not _looks_data(c.value)]
+    periods = [c for c in populated if _looks_period(c.value)]
+    return (
+        bool(texty)
+        and len(periods) >= _MIN_PERIOD_HEADERS
+        and len(texty) + len(periods) == len(populated)
+    )
+
+
 def _text_ratio(row: list[Cell]) -> float | None:
     populated = [c for c in row if _text(c.value)]
     if not populated:
@@ -230,7 +255,11 @@ def _detect_header_span(rows: list[list[Cell]]) -> tuple[int, float]:
         return any(c.merged_from is not None for c in row)
 
     r0 = _text_ratio(rows[0])
-    if r0 is None or (r0 < 0.5 and not has_merge(rows[0])):
+    if r0 is None or (
+        r0 < 0.5
+        and not has_merge(rows[0])
+        and not _is_periodic_header(rows[0])
+    ):
         return 0, 0.0
     span = 1
     max_span = min(3, len(rows) - 1)
