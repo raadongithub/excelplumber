@@ -11,7 +11,13 @@ CURRENCY_SYMBOLS = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "
 CURRENCY_CODES = frozenset({"USD", "EUR", "GBP", "JPY", "INR", "CAD", "AUD", "CHF", "PKR"})
 
 _NUM_CORE = re.compile(r"^[+-]?[\d.,\s]+$")
+_SCI_CORE = re.compile(r"^[+-]?[\d.,\s]+[eE][+-]?\d+$")
 _UNIT_SUFFIX = re.compile(r"^([+-]?[\d.,\s]+)\s*([A-Za-z%°/][A-Za-z%°/.\s]*)$")
+
+
+def looks_scientific(s: str) -> bool:
+    """True when a string carries an explicit exponent, like 1.23E+15."""
+    return bool(_SCI_CORE.match(s.strip()))
 
 
 def extract_symbol(s: str) -> tuple[str, str | None]:
@@ -80,12 +86,15 @@ def sniff_locale(samples: list[str]) -> tuple[str | None, float]:
 def parse_number(s: str, locale: str) -> int | Decimal | None:
     """Parse a bare numeric string under a frozen locale decision.
 
+    Exponent forms are parsed as Decimal so that the written digits
+    round-trip; going through float would not preserve them.
+
     Returns:
         int when the value has no fractional part, Decimal otherwise,
         None when the string is not a number under this locale.
     """
     s = s.strip().replace(" ", "").replace(" ", "")
-    if not s or not _NUM_CORE.match(s):
+    if not s or not (_NUM_CORE.match(s) or _SCI_CORE.match(s)):
         return None
     if locale == "eu":
         s = s.replace(".", "").replace(",", ".")

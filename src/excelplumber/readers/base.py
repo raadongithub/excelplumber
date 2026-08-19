@@ -37,7 +37,12 @@ RowStream = Iterator[list[Cell]]
 
 @dataclass
 class SheetInfo:
-    """Structural metadata for one sheet, gathered before value iteration."""
+    """Structural metadata for one sheet, gathered before value iteration.
+
+    uncached_formulas is a bounded sample of (row, col) coordinates whose
+    formula was never evaluated into a stored result, so the cell reads
+    back as empty; uncached_formula_count is the unbounded total.
+    """
 
     name: str
     index: int = 0
@@ -47,6 +52,8 @@ class SheetInfo:
     hidden_cols: set[int] = field(default_factory=set)
     dimension: tuple[int, int] | None = None
     capabilities: frozenset[str] = frozenset()
+    uncached_formulas: list[tuple[int, int]] = field(default_factory=list)
+    uncached_formula_count: int = 0
 
 
 class LimitGuard:

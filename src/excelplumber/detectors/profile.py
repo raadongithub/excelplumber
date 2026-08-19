@@ -21,6 +21,7 @@ from ..normalizers.dates import (
 from ..normalizers.numbers import (
     extract_symbol,
     extract_unit,
+    looks_scientific,
     parse_number,
     parse_percent,
     sniff_locale,
@@ -86,9 +87,12 @@ def profile_column(
     """Freeze a column's dtype, locale, unit, and date-order decision."""
     warnings: list[ParseWarning] = []
     str_samples = [clean(v) for v in samples if isinstance(v, str) and clean(v) and not is_na(clean(v))]
-    locale, loc_conf = sniff_locale(
-        [extract_unit(extract_symbol(strip_footnote(s)[0])[0])[0] for s in str_samples]
-    )
+    # The bare numeric body of each sample, with footnote, symbol, and
+    # unit removed; both the locale vote and the exponent check read it.
+    bodies = [
+        extract_unit(extract_symbol(strip_footnote(s)[0])[0])[0] for s in str_samples
+    ]
+    locale, loc_conf = sniff_locale(bodies)
     ambiguous_locale = locale is None
     if locale is None:
         locale = opts.locale
@@ -144,6 +148,16 @@ def profile_column(
     percent_convention: str | None = None
 
     if dtype in ("int", "decimal"):
+        if any(looks_scientific(b) for b in bodies):
+            warnings.append(
+                ParseWarning(
+                    WarningCode.SCI_NOTATION_PRESERVED,
+                    f"column {name!r} holds exponent-notation values; parsed to "
+                    "Decimal so the written digits round-trip exactly",
+                    sheet=sheet,
+                    column=name,
+                )
+            )
         if ambiguous_locale and any("," in s or "." in s for s in str_samples):
             warnings.append(
                 ParseWarning(
