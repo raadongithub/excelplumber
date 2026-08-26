@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "excelplumber"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Edge-case-hardened CSV/Excel parser for RAG chunking and embeddings"
 readme = "README.md"
 license = "MIT"
@@ -43,6 +43,9 @@ dev = ["pytest>=8.0"]
 excelplumber = "excelplumber.cli:main"
 
 [project.entry-points."excelplumber.readers"]
+
+[tool.hatch.version]
+path = "src/excelplumber/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/excelplumber"]
